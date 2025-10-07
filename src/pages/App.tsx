@@ -2,7 +2,7 @@ import { useState, FormEvent } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Send, Music2, Sparkles } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import Navbar from '../components/Navbar';
+import UnifiedNavbar from '../components/UnifiedNavbar';
 import TextArea from '../components/TextArea';
 import Button from '../components/Button';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -40,19 +40,20 @@ export default function App() {
     <div className="min-h-screen bg-black text-white">
       <div className="absolute inset-0 bg-gradient-to-br from-gray-900 via-black to-black" />
 
-      <Navbar />
+      <UnifiedNavbar />
 
       <div className="relative z-10 pt-24 px-6 pb-12">
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
+          initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, ease: 'easeOut' }}
           className="max-w-5xl mx-auto"
         >
           <div className="text-center mb-12">
             <motion.div
-              initial={{ scale: 0 }}
-              animate={{ scale: 1 }}
-              transition={{ type: 'spring', duration: 0.6 }}
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 0.3, ease: 'easeOut' }}
               className="inline-flex items-center gap-2 px-4 py-2 bg-white/5 border border-white/10 rounded-full mb-6"
             >
               <Sparkles size={16} className="text-gray-400" />
@@ -68,9 +69,9 @@ export default function App() {
           </div>
 
           <motion.div
-            initial={{ opacity: 0, y: 40 }}
+            initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2 }}
+            transition={{ delay: 0.15, duration: 0.4, ease: 'easeOut' }}
             className="bg-white/5 border border-white/10 rounded-2xl p-8 backdrop-blur-sm mb-8"
           >
             <form onSubmit={handleSubmit} className="space-y-6">

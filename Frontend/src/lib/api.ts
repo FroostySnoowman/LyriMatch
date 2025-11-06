@@ -1,39 +1,52 @@
-export interface SongRecommendation {
+// src/lib/api.ts
+
+export type SongRecommendation = {
   title: string;
   artist: string;
   similarity: number;
   reason: string;
-}
+};
 
-export interface AnalysisResponse {
+export type AnalyzeResponse = {
   recommendations: SongRecommendation[];
   analysis: string;
-}
+};
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+// Use backend URL from Vite environment variable
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
 
-export async function analyzeLyrics(lyrics: string, userId: string): Promise<AnalysisResponse> {
-  const response = await fetch(`${API_BASE_URL}/api/analyze`, {
-    method: 'POST',
+/**
+ * Sends lyrics to the Flask backend and returns analyzed results.
+ */
+export async function analyzeLyrics(lyrics: string): Promise<AnalyzeResponse> {
+  const res = await fetch(`${API_BASE}/search`, {
+    method: "POST",
     headers: {
-      'Content-Type': 'application/json',
+      "Content-Type": "application/json",
     },
-    body: JSON.stringify({ lyrics, user_id: userId }),
+    body: JSON.stringify({ lyrics }),
   });
 
-  if (!response.ok) {
-    throw new Error('Failed to analyze lyrics');
+  if (!res.ok) {
+    throw new Error(`API Error: ${res.status}`);
   }
 
-  return response.json();
-}
+  const data = await res.json();
 
-export async function getUserHistory(userId: string) {
-  const response = await fetch(`${API_BASE_URL}/api/history/${userId}`);
+  /**
+   * The backend currently returns:
+   * { results: [ { name, album_name, cosine_sim, ... }, ... ] }
+   * But App.tsx expects:
+   * { analysis: string, recommendations: SongRecommendation[] }
+   */
 
-  if (!response.ok) {
-    throw new Error('Failed to fetch history');
-  }
-
-  return response.json();
+  return {
+    analysis: "", // Optional placeholder (can be filled later if backend supports it)
+    recommendations: data.results.map((song: any) => ({
+      title: song.name,
+      artist: song.album_name,
+      similarity: song.cosine_sim,
+      reason: "Similar based on lyrics embedding.", // Placeholder text
+    })),
+  };
 }

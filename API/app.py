@@ -7,11 +7,12 @@ import faiss
 from flask import Flask, request, jsonify
 from sentence_transformers import SentenceTransformer
 import torch
+from flask_cors import CORS
 
 # ----------------------------
 # Configuration
 # ----------------------------
-PARQUET_PATH = r"D:\Spotify project\Data\song_embeddings\song_embeddings.parquet"
+PARQUET_PATH = "/Users/azericoby/Desktop/CS5615/LyriMatch/API/Data/song_embeddings/song_embeddings.parquet"
 EMBED_MODEL = "BAAI/bge-large-en-v1.5"   # 1024-dim; matches your dataset
 TOP_K = 5
 
@@ -19,6 +20,13 @@ TOP_K = 5
 # Globals (loaded once)
 # ----------------------------
 app = Flask(__name__)
+CORS(
+    app,
+    resources={r"/*": {"origins": "*"}},
+    supports_credentials=False,
+    allow_headers=["Content-Type", "Authorization"],
+    expose_headers="*",
+)
 
 _vectors = None           # np.ndarray [N, 1024], float32, L2-normalized
 _metadata = None          # pd.DataFrame with columns: id, name, album_name
@@ -100,8 +108,12 @@ def init():
 # ----------------------------
 # API
 # ----------------------------
-@app.route("/search", methods=["POST"])
+@app.route("/search", methods=["POST", "OPTIONS"])
 def search():
+    # Handle preflight
+    if request.method == "OPTIONS":
+        return ("", 204)
+
     """
     POST JSON: { "lyrics": "<string>" }
     Returns top-5 matches with cosine_sim.
@@ -115,7 +127,7 @@ def search():
     query_vec = embed_text(lyrics)  # (1, D), normalized
     scores, indices = _index.search(query_vec, TOP_K)
 
-    results: List[Dict] = []
+    results = []
     for rank, (i, s) in enumerate(zip(indices[0], scores[0]), start=1):
         row = _metadata.iloc[int(i)]
         results.append(
@@ -131,9 +143,23 @@ def search():
     return jsonify({"results": results})
 
 
-@app.route("/health", methods=["GET"])
+
+@app.route("/health", methods=["GET", "OPTIONS"])
 def health():
+    if request.method == "OPTIONS":
+        return ("", 204)
     return jsonify({"status": "ok"})
+
+
+
+@app.after_request
+def add_cors_headers(resp):
+    # If you want to lock to Vite later, replace "*" with "http://localhost:5173"
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+    resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    return resp
+
 
 
 # ----------------------------
@@ -145,4 +171,4 @@ if __name__ == "__main__":
     init()
     # Run Flask
     # Set host to "0.0.0.0" if you want to access from other machines
-    app.run(host="127.0.0.1", port=5000, debug=False)
+    app.run(host="127.0.0.1", port=5050, debug=False)

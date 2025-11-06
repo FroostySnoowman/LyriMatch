@@ -27,7 +27,7 @@ export default function App() {
     setResults(null);
 
     try {
-      const data = await analyzeLyrics(lyrics, user?.id || '');
+      const data = await analyzeLyrics(lyrics);
       setResults(data);
     } catch (err) {
       setError('Failed to analyze lyrics. Please make sure your backend is running.');

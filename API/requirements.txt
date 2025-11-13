@@ -1,6 +1,0 @@
-flask
-faiss-cpu
-sentence-transformers
-pandas
-pyarrow
-torch

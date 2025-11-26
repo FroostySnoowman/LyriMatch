@@ -24,6 +24,7 @@ export default function UnifiedNavbar() {
     { label: 'About', path: '/about' },
     { label: 'Pricing', path: '/pricing' },
     { label: 'Match Lyrics', path: '/app' },
+    { label: 'Add Song', path: '/add-song' },
   ];
 
   const isActive = (path: string) => location.pathname === path;
@@ -56,7 +57,7 @@ export default function UnifiedNavbar() {
                   <motion.div
                     layoutId="navbar-indicator"
                     className="absolute -bottom-5 left-0 right-0 h-0.5 bg-white"
-                    transition={{ type: 'spring', stiffness: 380, damping: 30 }}
+                    transition={{ type: 'spring', stiffness: 500, damping: 35, duration: 0.3 }}
                   />
                 )}
               </button>

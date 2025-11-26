@@ -1,6 +1,6 @@
 # Minimal Flask API:
 #   POST /search   { "lyrics": "<text>" }               ->  top-5 nearest songs as JSON
-#   POST /addSong  { "title": "<title>", "lyrics": "" } ->  add song & embedding to parquet + index
+#   POST /add_song  { "title": "<title>", "lyrics": "" } ->  add song & embedding to parquet + index
 #   GET /health                                         ->  health check endpoint
 
 import os
@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 import faiss
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 from sentence_transformers import SentenceTransformer
 import torch
 
@@ -27,6 +28,7 @@ EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 TOP_K = 5
 
 app = Flask(__name__)
+CORS(app)
 
 _vectors: np.ndarray | None = None    # np.ndarray [N, D], float32, L2-normalized
 _metadata: pd.DataFrame | None = None # columns: id, name, album_name
@@ -189,7 +191,7 @@ def search():
 
     return jsonify({"results": results})
 
-@app.route("/addSong", methods=["POST"])
+@app.route("/add_song", methods=["POST"])
 def add_song():
     global _vectors, _metadata, _index
 
@@ -259,4 +261,4 @@ if __name__ == "__main__":
     # keep faiss single-threaded as well
     faiss.omp_set_num_threads(1)
     init()
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    app.run(host="127.0.0.1", port=8080, debug=False)

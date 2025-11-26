@@ -4,3 +4,4 @@ pyarrow
 pandas
 torch
 flask
+flask-cors

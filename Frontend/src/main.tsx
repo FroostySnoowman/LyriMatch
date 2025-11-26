@@ -10,6 +10,7 @@ import Pricing from './pages/Pricing';
 import SignIn from './pages/SignIn';
 import SignUp from './pages/SignUp';
 import App from './pages/App';
+import AddSong from './pages/AddSong';
 import ProtectedRoute from './components/ProtectedRoute';
 import './index.css';
 
@@ -30,6 +31,14 @@ createRoot(document.getElementById('root')!).render(
             element={
               <ProtectedRoute>
                 <App />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/add-song"
+            element={
+              <ProtectedRoute>
+                <AddSong />
               </ProtectedRoute>
             }
           />

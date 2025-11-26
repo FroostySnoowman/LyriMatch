@@ -12,6 +12,12 @@ export type AnalyzeResponse = {
   analysis: string;
 };
 
+export type AddSongResponse = {
+  status: string;
+  id: number;
+  title: string;
+};
+
 // Use backend URL from Vite environment variable
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
 
@@ -49,4 +55,24 @@ export async function analyzeLyrics(lyrics: string): Promise<AnalyzeResponse> {
       reason: "Similar based on lyrics embedding.", // Placeholder text
     })),
   };
+}
+
+/**
+ * Adds a new song with lyrics to the Flask backend database.
+ */
+export async function addSong(title: string, lyrics: string): Promise<AddSongResponse> {
+  const res = await fetch(`${API_BASE}/add_song`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ title, lyrics }),
+  });
+
+  if (!res.ok) {
+    throw new Error(`API Error: ${res.status}`);
+  }
+
+  const data = await res.json();
+  return data;
 }

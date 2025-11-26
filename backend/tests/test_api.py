@@ -5,7 +5,7 @@ host = "127.0.0.1"
 port = 5000
 BASE_URL = f"http://{host}:{port}"
 
-add_url = f"{BASE_URL}/addSong"
+add_url = f"{BASE_URL}/add_song"
 search_url = f"{BASE_URL}/search"
 
 # --- 1) Add three simple "songs" ---

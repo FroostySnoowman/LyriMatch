@@ -1,6 +1,6 @@
-flask
-faiss-cpu
 sentence-transformers
-pandas
+faiss-cpu
 pyarrow
+pandas
 torch
+flask

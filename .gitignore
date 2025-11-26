@@ -28,6 +28,3 @@ __pycache__
 .pyc
 backend
 
-
-# Much to large to keep in repo
-API/Data/song_embeddings/song_embeddings.parquet

@@ -22,7 +22,7 @@ import torch
 # ----------------------------
 
 # Directory that contains songembeddings.parquet (or nothing)
-SONG_EMBEDDINGS_DIR = r"c:\Users\Natha\Desktop\Language Processing\LyriMatch\API\Data\song_embeddings"
+SONG_EMBEDDINGS_DIR = r"API\Data\song_embeddings"
 SONG_EMBEDDINGS_FILE = os.path.join(SONG_EMBEDDINGS_DIR, "songembeddings.parquet")
 
 EMBED_MODEL = "BAAI/bge-m3"

@@ -501,14 +501,6 @@ pip install -r requirements.txt
 
 ---
 
-#### **Tensor size mismatch errors**
-
-**Problem**: `The size of tensor a (681) must match the size of tensor b (512)`
-
-**Solution**: This has been fixed in the latest version. Ensure you're using the updated code with `truncate=True` in the embedding function.
-
----
-
 #### **Port already in use**
 
 **Problem**: `Address already in use: 127.0.0.1:8080`

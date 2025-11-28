@@ -539,4 +539,4 @@ if __name__ == "__main__":
     # keep faiss single-threaded as well
     faiss.omp_set_num_threads(1)
     init()
-    app.run(host="127.0.0.1", port=PORT, debug=False)
+    app.run(host="0.0.0.0", port=PORT, debug=False)

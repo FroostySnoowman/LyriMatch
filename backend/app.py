@@ -244,10 +244,10 @@ def search():
         row = _metadata.iloc[int(i)]
         results.append(
             {
-                "rank": rank,
-                "name": row["name"],
-                "album_name": row["album_name"],
-                "id": row["id"],
+                "rank": int(rank),
+                "name": str(row["name"]),
+                "album_name": str(row["album_name"]),
+                "id": int(row["id"]),
                 "cosine_sim": float(s),
             }
         )

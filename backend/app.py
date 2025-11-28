@@ -29,6 +29,7 @@ load_dotenv()
 SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID", "")
 SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET", "")
 GENIUS_API_KEY = os.getenv("GENIUS_API_KEY", "")
+PORT = int(os.getenv("PORT", "8080"))
 
 # Spotify API Credentials
 sp = spotipy.Spotify(
@@ -538,4 +539,4 @@ if __name__ == "__main__":
     # keep faiss single-threaded as well
     faiss.omp_set_num_threads(1)
     init()
-    app.run(host="127.0.0.1", port=8080, debug=False)
+    app.run(host="127.0.0.1", port=PORT, debug=False)

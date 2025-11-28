@@ -646,18 +646,6 @@ Having issues? Here's how to get help:
 
 ---
 
-## 🗺️ Roadmap
-
-- [ ] Add user authentication
-- [ ] Save favorite searches
-- [ ] Export results to playlists
-- [ ] Support for more music platforms
-- [ ] Advanced filtering options
-- [ ] Lyrics highlighting
-- [ ] Mobile app version
-
----
-
 <div align="center">
 
 **Made with ❤️ and 🎵**

@@ -1,5 +1,3 @@
-// src/lib/api.ts
-
 export type SongRecommendation = {
   title: string;
   artist: string;
@@ -16,6 +14,31 @@ export type AddSongResponse = {
   status: string;
   id: number;
   title: string;
+};
+
+export type AddPlaylistResponse = {
+  status: string;
+  added: {
+    id: number;
+    title: string;
+    artist: string;
+  }[];
+};
+
+export type PlaylistTracksResponse = {
+  status: string;
+  tracks: {
+    title: string;
+    artists: string[];
+  }[];
+  total: number;
+};
+
+export type AddSongFromSearchResponse = {
+  status: string;
+  id: number;
+  title: string;
+  artist: string;
 };
 
 // Use backend URL from Vite environment variable
@@ -71,6 +94,68 @@ export async function addSong(title: string, lyrics: string): Promise<AddSongRes
 
   if (!res.ok) {
     throw new Error(`API Error: ${res.status}`);
+  }
+
+  const data = await res.json();
+  return data;
+}
+
+/**
+ * Adds songs from a Spotify playlist to the Flask backend database.
+ */
+export async function addPlaylist(playlistUrl: string, songLimit?: number): Promise<AddPlaylistResponse> {
+  const res = await fetch(`${API_BASE}/add_playlist`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ playlist_url: playlistUrl, song_limit: songLimit }),
+  });
+
+  if (!res.ok) {
+    throw new Error(`API Error: ${res.status}`);
+  }
+
+  const data = await res.json();
+  return data;
+}
+
+/**
+ * Fetches the track list from a Spotify playlist without processing.
+ */
+export async function getPlaylistTracks(playlistUrl: string, songLimit?: number): Promise<PlaylistTracksResponse> {
+  const res = await fetch(`${API_BASE}/get_playlist_tracks`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ playlist_url: playlistUrl, song_limit: songLimit }),
+  });
+
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.error || `API Error: ${res.status}`);
+  }
+
+  const data = await res.json();
+  return data;
+}
+
+/**
+ * Adds a song by searching for lyrics on Genius.
+ */
+export async function addSongFromSearch(title: string, artist: string): Promise<AddSongFromSearchResponse> {
+  const res = await fetch(`${API_BASE}/add_song_from_search`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ title, artist }),
+  });
+
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.error || `API Error: ${res.status}`);
   }
 
   const data = await res.json();

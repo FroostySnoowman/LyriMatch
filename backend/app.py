@@ -1,7 +1,7 @@
 # Minimal Flask API:
-#   POST /search   { "lyrics": "<text>" }               ->  top-5 nearest songs as JSON
+#   POST /search   { "lyrics": "<text>" }                ->  top-5 nearest songs as JSON
 #   POST /add_song  { "title": "<title>", "lyrics": "" } ->  add song & embedding to parquet + index
-#   GET /health                                         ->  health check endpoint
+#   GET /health                                          ->  health check endpoint
 
 import os
 from typing import List, Dict, Tuple
@@ -11,13 +11,41 @@ os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("MKL_NUM_THREADS", "1")
 
+import lyricsgenius as lg
+import spotipy
 import numpy as np
 import pandas as pd
 import faiss
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from sentence_transformers import SentenceTransformer
+from spotipy.exceptions import SpotifyException
+from spotipy.oauth2 import SpotifyClientCredentials
+from dotenv import load_dotenv
 import torch
+
+load_dotenv()
+
+SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID", "")
+SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET", "")
+GENIUS_API_KEY = os.getenv("GENIUS_API_KEY", "")
+
+# Spotify API Credentials
+sp = spotipy.Spotify(
+    auth_manager=SpotifyClientCredentials(
+        client_id=SPOTIFY_CLIENT_ID,
+        client_secret=SPOTIFY_CLIENT_SECRET
+    )
+)
+
+# Genius Lyrics API Key
+genius = lg.Genius(
+    GENIUS_API_KEY,
+    skip_non_songs=True,
+    excluded_terms=["(Remix)", "(Live)"],
+    remove_section_headers=True,
+    timeout=15
+)
 
 # Directory that contains songembeddings.parquet (or nothing)
 SONG_EMBEDDINGS_DIR = r"data\song_embeddings"
@@ -98,10 +126,9 @@ def build_cosine_index(vectors: np.ndarray, dim: int | None = None) -> faiss.Ind
     return index
 
 def load_embedder(model_name: str) -> SentenceTransformer:
-    # force CPU and single-threaded torch to avoid libomp weirdness
     torch.set_num_threads(1)
     model = SentenceTransformer(model_name, device="cpu")
-    model.max_seq_length = 2048
+    model.max_seq_length = 512
     return model
 
 def embed_text(text: str) -> np.ndarray:
@@ -124,11 +151,46 @@ def embed_text(text: str) -> np.ndarray:
     emb = np.ascontiguousarray(emb, dtype=np.float32)
     return emb
 
+def song_exists(name: str) -> bool:
+    """Check if a song with the given name already exists in the database."""
+    global _metadata
+    if _metadata is None or _metadata.empty:
+        return False
+    # Case-insensitive check for duplicate song names
+    return name.strip().lower() in _metadata["name"].str.lower().values
+
 def next_song_id() -> int:
     global _metadata
     if _metadata is None or _metadata.empty:
         return 1
     return int(_metadata["id"].max()) + 1
+
+def get_playlist_tracks(playlist_url, song_limit=None):
+    playlist_id = playlist_url.split("/")[-1].split("?")[0]
+    print(f"Using playlist ID: {playlist_id}")
+
+    results = sp.playlist_items(playlist_id)
+    tracks = []
+
+    while results:
+        for item in results["items"]:
+            track = item["track"]
+            if not track:
+                continue
+
+            title = track["name"]
+            artists = [a["name"] for a in track["artists"]]
+            tracks.append((title, artists))
+
+            if song_limit is not None and len(tracks) >= song_limit:
+                return tracks
+
+        if results["next"]:
+            results = sp.next(results)
+        else:
+            break
+
+    return tracks
 
 def init():
     global _vectors, _metadata, _index, _model
@@ -204,13 +266,17 @@ def add_song():
     if not isinstance(lyrics, str) or not lyrics.strip():
         return jsonify({"error": "Missing or empty 'lyrics'"}), 400
 
+    if _vectors is None or _metadata is None or _index is None:
+        return jsonify({"error": "Server not initialized yet."}), 500
+
+    # Check for duplicate song name
+    if song_exists(title):
+        return jsonify({"error": f"Song '{title.strip()}' already exists in the database."}), 409
+
     try:
         vec = embed_text(lyrics)
     except Exception as e:
         return jsonify({"error": f"Failed to embed lyrics: {e}"}), 500
-
-    if _vectors is None or _metadata is None or _index is None:
-        return jsonify({"error": "Server not initialized yet."}), 500
 
     if _vectors.shape[1] != vec.shape[1]:
         return jsonify({
@@ -244,6 +310,217 @@ def add_song():
         "status": "ok",
         "id": new_id,
         "title": title.strip(),
+    }), 200
+
+@app.route("/get_playlist_tracks", methods=["POST"])
+def get_playlist_tracks_endpoint():
+    data = request.get_json(silent=True) or {}
+    playlist_url = data.get("playlist_url", "")
+    song_limit = data.get("song_limit")
+
+    if not isinstance(playlist_url, str) or not playlist_url.strip():
+        return jsonify({"error": "Missing or empty 'playlist_url'"}), 400
+
+    if song_limit is not None:
+        try:
+            song_limit = int(song_limit)
+            if song_limit <= 0:
+                song_limit = None
+        except Exception:
+            song_limit = None
+
+    try:
+        tracks = get_playlist_tracks(playlist_url, song_limit=song_limit)
+    except SpotifyException as e:
+        if e.http_status == 404:
+            return jsonify({"error": "Playlist not found or not accessible via API."}), 400
+        return jsonify({"error": f"Failed to read playlist: {e}"}), 500
+    except Exception as e:
+        return jsonify({"error": f"Failed to read playlist: {e}"}), 500
+
+    if not tracks:
+        return jsonify({"error": "No tracks found for this playlist."}), 400
+
+    track_list = [
+        {"title": title, "artists": artists}
+        for title, artists in tracks
+    ]
+
+    return jsonify({
+        "status": "ok",
+        "tracks": track_list,
+        "total": len(track_list),
+    }), 200
+
+@app.route("/add_song_from_search", methods=["POST"])
+def add_song_from_search():
+    global _vectors, _metadata, _index
+
+    data = request.get_json(silent=True) or {}
+    title = data.get("title", "")
+    artist = data.get("artist", "")
+
+    if not isinstance(title, str) or not title.strip():
+        return jsonify({"error": "Missing or empty 'title'"}), 400
+
+    if _vectors is None or _metadata is None or _index is None:
+        return jsonify({"error": "Server not initialized yet."}), 500
+
+    display_title = title.strip()
+    display_artist = artist.strip()
+    name = display_title if not display_artist else f"{display_title} - {display_artist}"
+
+    # Check for duplicate song name
+    if song_exists(name):
+        return jsonify({"error": f"Song '{name}' already exists in the database."}), 409
+
+    try:
+        song = genius.search_song(title, artist)
+    except Exception as e:
+        return jsonify({"error": f"Failed to search for lyrics: {e}"}), 500
+
+    if not song or not isinstance(song.lyrics, str) or not song.lyrics.strip():
+        return jsonify({"error": f"No lyrics found for '{title}' by '{artist}'"}), 404
+
+    lyrics = song.lyrics
+
+    try:
+        vec = embed_text(lyrics)
+    except Exception as e:
+        return jsonify({"error": f"Failed to embed lyrics: {e}"}), 500
+
+    if _vectors.shape[1] != vec.shape[1]:
+        return jsonify({
+            "error": f"Embedding dimension mismatch. Existing: "
+                     f"{_vectors.shape[1]}, new: {vec.shape[1]}"
+        }), 500
+
+    new_id = next_song_id()
+
+    _vectors = np.vstack([_vectors, vec])
+
+    new_row = {"id": new_id, "name": name, "album_name": ""}
+    _metadata = pd.concat(
+        [_metadata, pd.DataFrame([new_row])],
+        ignore_index=True
+    )
+
+    faiss.normalize_L2(vec)
+    _index.add(vec)
+
+    try:
+        save_data(SONG_EMBEDDINGS_FILE, _vectors, _metadata)
+    except Exception as e:
+        return jsonify({
+            "error": f"Song added in-memory but failed to save parquet: {e}",
+            "id": new_id,
+            "title": display_title,
+            "artist": display_artist,
+        }), 500
+
+    return jsonify({
+        "status": "ok",
+        "id": new_id,
+        "title": display_title,
+        "artist": display_artist,
+    }), 200
+
+@app.route("/add_playlist", methods=["POST"])
+def add_playlist():
+    global _vectors, _metadata, _index
+
+    data = request.get_json(silent=True) or {}
+    playlist_url = data.get("playlist_url", "")
+    song_limit = data.get("song_limit")
+
+    if not isinstance(playlist_url, str) or not playlist_url.strip():
+        return jsonify({"error": "Missing or empty 'playlist_url'"}), 400
+
+    if song_limit is not None:
+        try:
+            song_limit = int(song_limit)
+            if song_limit <= 0:
+                song_limit = None
+        except Exception:
+            song_limit = None
+
+    if _vectors is None or _metadata is None or _index is None:
+        return jsonify({"error": "Server not initialized yet."}), 500
+
+    try:
+        tracks = get_playlist_tracks(playlist_url, song_limit=song_limit)
+    except SpotifyException as e:
+        if e.http_status == 404:
+            return jsonify({"error": "Playlist not found or not accessible via API."}), 400
+        return jsonify({"error": f"Failed to read playlist: {e}"}), 500
+    except Exception as e:
+        return jsonify({"error": f"Failed to read playlist: {e}"}), 500
+
+    if not tracks:
+        return jsonify({"error": "No tracks found for this playlist."}), 400
+
+    added = []
+
+    for title, artists in tracks:
+        primary_artist = artists[0] if artists else ""
+        try:
+            song = genius.search_song(title, primary_artist)
+        except Exception:
+            continue
+
+        if not song or not isinstance(song.lyrics, str) or not song.lyrics.strip():
+            continue
+
+        lyrics = song.lyrics
+
+        try:
+            vec = embed_text(lyrics)
+        except Exception as e:
+            return jsonify({"error": f"Failed to embed lyrics for '{title}': {e}"}), 500
+
+        if _vectors.shape[1] != vec.shape[1]:
+            return jsonify({
+                "error": f"Embedding dimension mismatch. Existing: "
+                         f"{_vectors.shape[1]}, new: {vec.shape[1]}"
+            }), 500
+
+        new_id = next_song_id()
+
+        _vectors = np.vstack([_vectors, vec])
+
+        display_title = title.strip()
+        display_artist = primary_artist.strip()
+        name = display_title if not display_artist else f"{display_title} - {display_artist}"
+
+        new_row = {"id": new_id, "name": name, "album_name": ""}
+        _metadata = pd.concat(
+            [_metadata, pd.DataFrame([new_row])],
+            ignore_index=True
+        )
+
+        faiss.normalize_L2(vec)
+        _index.add(vec)
+
+        added.append({
+            "id": new_id,
+            "title": display_title,
+            "artist": display_artist,
+        })
+
+    if not added:
+        return jsonify({"error": "No lyrics were embedded for this playlist."}), 400
+
+    try:
+        save_data(SONG_EMBEDDINGS_FILE, _vectors, _metadata)
+    except Exception as e:
+        return jsonify({
+            "error": f"Songs added in-memory but failed to save parquet: {e}",
+            "added": added,
+        }), 500
+
+    return jsonify({
+        "status": "ok",
+        "added": added,
     }), 200
 
 @app.route("/health", methods=["GET"])

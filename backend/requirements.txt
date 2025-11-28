@@ -5,3 +5,6 @@ pandas
 torch
 flask
 flask-cors
+lyricsgenius
+spotipy
+python-dotenv

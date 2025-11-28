@@ -49,7 +49,8 @@ genius = lg.Genius(
 )
 
 # Directory that contains songembeddings.parquet (or nothing)
-SONG_EMBEDDINGS_DIR = r"data\song_embeddings"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+SONG_EMBEDDINGS_DIR = os.path.join(BASE_DIR, "data", "song_embeddings")
 SONG_EMBEDDINGS_FILE = os.path.join(SONG_EMBEDDINGS_DIR, "songembeddings.parquet")
 
 # Use a smaller, stable embedding model instead of BAAI/bge-m3

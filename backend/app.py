@@ -525,6 +525,79 @@ def add_playlist():
         "added": added,
     }), 200
 
+@app.route("/browse_songs", methods=["GET"])
+def browse_songs():
+    global _metadata
+    
+    if _metadata is None or _metadata.empty:
+        return jsonify({
+            "songs": [],
+            "total": 0,
+            "page": 1,
+            "per_page": 20,
+            "total_pages": 0,
+        }), 200
+    
+    # Get query parameters
+    page = request.args.get("page", 1, type=int)
+    per_page = request.args.get("per_page", 20, type=int)
+    search_query = request.args.get("query", "").strip()
+    sort_by = request.args.get("sort_by", "id")  # id, name, album_name
+    sort_order = request.args.get("sort_order", "asc")  # asc, desc
+    
+    # Validate parameters
+    page = max(1, page)
+    per_page = max(1, min(100, per_page))  # Limit to 100 per page
+    
+    # Work with a copy to avoid modifying global metadata
+    df = _metadata.copy()
+    
+    # Apply search filter if query provided
+    if search_query:
+        # Case-insensitive search in both name and album_name
+        mask = (
+            df["name"].str.lower().str.contains(search_query.lower(), na=False) |
+            df["album_name"].str.lower().str.contains(search_query.lower(), na=False)
+        )
+        df = df[mask]
+    
+    # Apply sorting
+    if sort_by in ["id", "name", "album_name"]:
+        ascending = sort_order.lower() == "asc"
+        df = df.sort_values(by=sort_by, ascending=ascending)
+    
+    # Calculate pagination
+    total_songs = len(df)
+    total_pages = (total_songs + per_page - 1) // per_page  # Ceiling division
+    
+    # Validate page number
+    if page > total_pages and total_pages > 0:
+        page = total_pages
+    
+    # Get page slice
+    start_idx = (page - 1) * per_page
+    end_idx = start_idx + per_page
+    page_df = df.iloc[start_idx:end_idx]
+    
+    # Convert to list of dicts
+    songs = []
+    for _, row in page_df.iterrows():
+        songs.append({
+            "id": int(row["id"]),
+            "name": str(row["name"]),
+            "album_name": str(row["album_name"]),
+        })
+    
+    return jsonify({
+        "songs": songs,
+        "total": total_songs,
+        "page": page,
+        "per_page": per_page,
+        "total_pages": total_pages,
+        "has_next": page < total_pages,
+        "has_prev": page > 1,
+    }), 200
+
 @app.route("/health", methods=["GET"])
 def health():
     ready = _index is not None and _model is not None

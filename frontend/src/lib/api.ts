@@ -41,6 +41,22 @@ export type AddSongFromSearchResponse = {
   artist: string;
 };
 
+export type BrowseSong = {
+  id: number;
+  name: string;
+  album_name: string;
+};
+
+export type BrowseSongsResponse = {
+  songs: BrowseSong[];
+  total: number;
+  page: number;
+  per_page: number;
+  total_pages: number;
+  has_next: boolean;
+  has_prev: boolean;
+};
+
 // Use backend URL from Vite environment variable
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
 
@@ -152,6 +168,38 @@ export async function addSongFromSearch(title: string, artist: string): Promise<
     },
     body: JSON.stringify({ title, artist }),
   });
+
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.error || `API Error: ${res.status}`);
+  }
+
+  const data = await res.json();
+  return data;
+}
+
+/**
+ * Browse all songs in the database with search, pagination, and sorting.
+ */
+export async function browseSongs(
+  page: number = 1,
+  perPage: number = 20,
+  query: string = "",
+  sortBy: "id" | "name" | "album_name" = "id",
+  sortOrder: "asc" | "desc" = "asc"
+): Promise<BrowseSongsResponse> {
+  const params = new URLSearchParams({
+    page: page.toString(),
+    per_page: perPage.toString(),
+    sort_by: sortBy,
+    sort_order: sortOrder,
+  });
+
+  if (query) {
+    params.append("query", query);
+  }
+
+  const res = await fetch(`${API_BASE}/browse_songs?${params.toString()}`);
 
   if (!res.ok) {
     const errorData = await res.json().catch(() => ({}));

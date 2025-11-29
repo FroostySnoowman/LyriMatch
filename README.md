@@ -20,6 +20,7 @@
 - [API Endpoints](#-api-endpoints)
 - [Project Structure](#-project-structure)
 - [How It Works](#-how-it-works)
+- [Experiments & Evaluation](#-experiments--evaluation)
 - [Troubleshooting](#-troubleshooting)
 - [Contributing](#-contributing)
 - [License](#-license)
@@ -414,38 +415,41 @@ GET /health
 
 ## 📁 Project Structure
 
-```
+```text
 LyriMatch/
 ├── backend/
-│   ├── app.py                      # Flask API server
-│   ├── lyrics.py                   # Lyrics processing utilities
-│   ├── requirements.txt            # Python dependencies
-│   ├── .env.example               # Environment variables template
+│   ├── app.py                             # Flask API server
+│   ├── build_lyrics_dataset_from_playlist.py  # Build evaluation CSV from Spotify + Genius
+│   ├── experiments_tfidf_vs_embedding.py      # Offline TF-IDF vs embedding evaluation
+│   ├── lyrics.py                        # Lyrics processing utilities
+│   ├── requirements.txt                 # Python dependencies
+│   ├── .env.example                     # Environment variables template
 │   ├── data/
-│   │   └── song_embeddings/       # Stored embeddings (auto-created)
-│   │       └── songembeddings.parquet
-│   └── venv/                      # Virtual environment (git-ignored)
+│   │   ├── song_embeddings/             # Stored embeddings for the live API
+│   │   │   └── songembeddings.parquet
+│   │   └── lyrics_dataset.csv           # Offline evaluation dataset (built via script)
+│   └── venv/                            # Virtual environment (git-ignored)
 │
 ├── frontend/
 │   ├── src/
-│   │   ├── components/            # Reusable UI components
-│   │   ├── pages/                 # Page components
-│   │   │   ├── App.tsx           # Main search page
-│   │   │   ├── AddSong.tsx       # Add songs/playlists
-│   │   │   ├── Landing.tsx       # Landing page
+│   │   ├── components/                  # Reusable UI components
+│   │   ├── pages/                       # Page components
+│   │   │   ├── App.tsx                 # Main search page
+│   │   │   ├── AddSong.tsx             # Add songs/playlists
+│   │   │   ├── Landing.tsx             # Landing page
 │   │   │   └── ...
 │   │   ├── lib/
-│   │   │   ├── api.ts            # API client functions
-│   │   │   └── supabase.ts       # Supabase client (optional)
-│   │   └── main.tsx              # App entry point
-│   ├── package.json              # Node dependencies
-│   ├── .env.example             # Environment variables template
-│   ├── vite.config.ts           # Vite configuration
-│   └── tailwind.config.js       # Tailwind CSS config
+│   │   │   ├── api.ts                  # API client functions
+│   │   │   └── supabase.ts             # Supabase client (optional)
+│   │   └── main.tsx                    # App entry point
+│   ├── package.json                    # Node dependencies
+│   ├── .env.example                    # Environment variables template
+│   ├── vite.config.ts                  # Vite configuration
+│   └── tailwind.config.js              # Tailwind CSS config
 │
-├── setup.sh                      # Automated setup script (Unix)
-├── .gitignore                   # Git ignore rules
-└── README.md                    # This file
+├── setup.sh                            # Automated setup script (Unix)
+├── .gitignore                          # Git ignore rules
+└── README.md                           # This file
 ```
 
 ---
@@ -481,6 +485,92 @@ LyriMatch/
 - Long lyrics automatically truncated to 512 tokens
 - Prevents tensor dimension mismatches
 - Maintains model compatibility
+
+---
+
+## 🧪 Experiments & Evaluation
+
+LyriMatch includes a small offline evaluation pipeline to compare a **classical TF-IDF baseline** with the **embedding-based model** used in the live API.
+
+These scripts are intended for **reproducible experiments** (e.g., course project reports) and do **not** affect the running Flask server.
+
+### 1. Build the Evaluation Dataset
+
+Use a Spotify playlist + Genius lyrics to build `data/lyrics_dataset.csv`:
+
+```bash
+cd backend
+source venv/bin/activate
+python build_lyrics_dataset_from_playlist.py
+```
+
+You will be prompted for:
+
+- A Spotify playlist URL
+- An optional maximum number of songs to pull
+
+For each track in the playlist:
+
+- Spotify is used to get the title and artist
+- Genius is used to fetch full lyrics
+- Successful entries are stored in `data/lyrics_dataset.csv` with columns:
+
+```text
+song_id, title, artist, lyrics
+```
+
+You can run this script multiple times on different playlists; new songs will be appended.
+
+### 2. Run TF-IDF vs Embedding Experiments
+
+Once `lyrics_dataset.csv` exists, run:
+
+```bash
+cd backend
+source venv/bin/activate   # if not already active
+python experiments_tfidf_vs_embedding.py
+```
+
+This script will:
+
+1. Load `data/lyrics_dataset.csv`.
+2. Build a **TF-IDF baseline** (unigrams + bigrams, 50k vocabulary).
+3. Build an **embedding matrix** using `all-MiniLM-L6-v2` (same model as the API) and a FAISS index.
+4. Construct an evaluation set of songs where each artist has ≥ 4 songs.
+5. Define "relevant" songs as **other tracks by the same artist**.
+6. Compute **Precision@5** and **Recall@5** for both models.
+7. Print a few **qualitative examples** (query + top-5 neighbors from each method) that can be copied into reports/slides.
+
+Example output (abridged):
+
+```text
+=== Quantitative results ===
+TF-IDF baseline:     P@5 = 0.088, R@5 = 0.022
+Embedding + FAISS:   P@5 = 0.076, R@5 = 0.017
+
+=== Qualitative examples ===
+
+Example 1: Query song
+  ID:    316
+  Title: Sober
+  Artist: P!nk
+
+  TF-IDF top-5 neighbors:
+    1. Sober — P!nk
+    ...
+
+  Embedding top-5 neighbors:
+    1. Sober — P!nk
+    2. 1-800-273-8255 — Logic
+    3. Without Me — Halsey
+    ...
+```
+
+You can use these numbers and examples directly in your **Methods**, **Results**, and **Discussion** sections to show:
+
+- How a classical TF-IDF baseline compares to a modern embedding model.
+- That you have a clear evaluation protocol (P@k / R@k).
+- Concrete examples of how each model behaves.
 
 ---
 

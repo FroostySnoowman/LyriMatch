@@ -4,6 +4,7 @@
 #   GET /health                                          ->  health check endpoint
 
 import os
+import re
 from typing import List, Dict, Tuple
 
 # reduce chances of OpenMP / tokenizer crashes on Apple Silicon
@@ -64,6 +65,8 @@ _vectors: np.ndarray | None = None    # np.ndarray [N, D], float32, L2-normalize
 _metadata: pd.DataFrame | None = None # columns: id, name, album_name
 _index: faiss.IndexFlatIP | None = None
 _model: SentenceTransformer | None = None
+_song_keys_full: set[Tuple[str, str]] | None = None
+_song_keys_title_only: set[str] | None = None
 
 def ensure_embeddings_dir():
     os.makedirs(SONG_EMBEDDINGS_DIR, exist_ok=True)
@@ -153,6 +156,66 @@ def embed_text(text: str) -> np.ndarray:
     emb = np.ascontiguousarray(emb, dtype=np.float32)
     return emb
 
+def _normalize_text(value: str) -> str:
+    if not isinstance(value, str):
+        value = str(value)
+    value = value.strip().lower()
+    value = re.sub(r"\s+", " ", value)
+    return value
+
+def register_song_key(name: str, album_name: str = ""):
+    """
+    Register a song into the in-memory duplicate key sets.
+
+    name is the stored 'name' column, album_name is the stored 'album_name'
+    (often used as artist). Handles legacy rows where name='title - artist'
+    and album_name may be empty.
+    """
+    global _song_keys_full, _song_keys_title_only
+    if _song_keys_full is None:
+        _song_keys_full = set()
+    if _song_keys_title_only is None:
+        _song_keys_title_only = set()
+
+    n = _normalize_text(name)
+    a = _normalize_text(album_name)
+
+    if a:
+        # We have explicit artist/album information.
+        # Many rows from /add_song_from_search have name='title - artist'
+        # and album_name='artist'. Strip the ' - artist' suffix when present
+        # so the canonical key becomes (title, artist).
+        title = n
+        artist = a
+        suffix = f" - {artist}"
+        if n.endswith(suffix):
+            title = _normalize_text(n[: -len(suffix)])
+        _song_keys_full.add((title, artist))
+    else:
+        # No album/artist stored. Older playlist imports used
+        # name='title - artist' with empty album_name; treat those as having
+        # both title & artist. Pure title-only rows (no ' - ') are kept in a
+        # separate title-only set.
+        if " - " in n:
+            raw_title, raw_artist = n.split(" - ", 1)
+            title = _normalize_text(raw_title)
+            artist = _normalize_text(raw_artist)
+            _song_keys_full.add((title, artist))
+        else:
+            title = n
+            _song_keys_title_only.add(title)
+
+def rebuild_song_keys():
+    global _song_keys_full, _song_keys_title_only, _metadata
+    _song_keys_full = set()
+    _song_keys_title_only = set()
+    if _metadata is None or _metadata.empty:
+        return
+    for _, row in _metadata.iterrows():
+        name = row.get("name", "")
+        album_name = row.get("album_name", "")
+        register_song_key(name, album_name)
+
 def song_exists(name: str, album_name: str = "") -> bool:
     """
     Check if a song with the given name and artist/album already exists.
@@ -162,24 +225,24 @@ def song_exists(name: str, album_name: str = "") -> bool:
     
     This allows multiple songs with the same title but different artists/albums.
     """
-    global _metadata
+    global _metadata, _song_keys_full, _song_keys_title_only
     if _metadata is None or _metadata.empty:
         return False
-    
-    # Case-insensitive check for song name
-    name_lower = name.strip().lower()
-    
-    # If we have album/artist info, check for exact combo
-    if album_name and album_name.strip():
-        album_lower = album_name.strip().lower()
-        
-        mask = (
-            (_metadata["name"].str.lower() == name_lower) &
-            (_metadata["album_name"].str.lower() == album_lower)
-        )
-        return mask.any()
-    else:
-        return name_lower in _metadata["name"].str.lower().values
+
+    if _song_keys_full is None or _song_keys_title_only is None:
+        rebuild_song_keys()
+
+    name_norm = _normalize_text(name)
+    album_norm = _normalize_text(album_name)
+
+    if album_norm:
+        # Full (title, artist/album) duplicate check.
+        key = (name_norm, album_norm)
+        return key in _song_keys_full
+
+    # No album/artist provided: only check against pure title-only rows so
+    # that the same title can still appear for different artists/albums.
+    return name_norm in _song_keys_title_only
 
 def next_song_id() -> int:
     global _metadata
@@ -227,6 +290,9 @@ def init():
     if _vectors.size == 0:
         _vectors = np.zeros((0, emb_dim), dtype=np.float32)
         _metadata = pd.DataFrame(columns=["id", "name", "album_name"])
+
+    # Build duplicate key sets from whatever metadata we loaded.
+    rebuild_song_keys()
 
     _index = build_cosine_index(_vectors, dim=emb_dim)
 
@@ -292,7 +358,7 @@ def add_song():
     if _vectors is None or _metadata is None or _index is None:
         return jsonify({"error": "Server not initialized yet."}), 500
 
-    # Check for duplicate song name (with album if provided)
+    # Check for duplicate song name (with album/artist if provided)
     if song_exists(title, album):
         if album:
             return jsonify({"error": f"Song '{title.strip()}' by '{album.strip()}' already exists in the database."}), 409
@@ -319,6 +385,7 @@ def add_song():
         [_metadata, pd.DataFrame([new_row])],
         ignore_index=True
     )
+    register_song_key(new_row["name"], new_row["album_name"])
 
     faiss.normalize_L2(vec)
     _index.add(vec)
@@ -360,9 +427,9 @@ def get_playlist_tracks_endpoint():
     except SpotifyException as e:
         if e.http_status == 404:
             return jsonify({"error": "Playlist not found or not accessible via API."}), 400
-        return jsonify({"error": f"Failed to read playlist: {e}"}), 500
+        return jsonify({"error": "Failed to read playlist: {}".format(e)}), 500
     except Exception as e:
-        return jsonify({"error": f"Failed to read playlist: {e}"}), 500
+        return jsonify({"error": "Failed to read playlist: {}".format(e)}), 500
 
     if not tracks:
         return jsonify({"error": "No tracks found for this playlist."}), 400
@@ -405,7 +472,7 @@ def add_song_from_search():
             return jsonify({"error": f"Song '{name}' already exists in the database."}), 409
 
     try:
-        song = genius.search_song(title, artist)
+        song = genius.search_song(display_title, display_artist)
     except Exception as e:
         return jsonify({"error": f"Failed to search for lyrics: {e}"}), 500
 
@@ -435,6 +502,7 @@ def add_song_from_search():
         [_metadata, pd.DataFrame([new_row])],
         ignore_index=True
     )
+    register_song_key(new_row["name"], new_row["album_name"])
 
     faiss.normalize_L2(vec)
     _index.add(vec)
@@ -494,8 +562,15 @@ def add_playlist():
 
     for title, artists in tracks:
         primary_artist = artists[0] if artists else ""
+        display_title = title.strip()
+        display_artist = primary_artist.strip()
+
+        # Skip if this (title, artist) pair is already present.
+        if song_exists(display_title, display_artist):
+            continue
+
         try:
-            song = genius.search_song(title, primary_artist)
+            song = genius.search_song(display_title, display_artist)
         except Exception:
             continue
 
@@ -519,8 +594,6 @@ def add_playlist():
 
         _vectors = np.vstack([_vectors, vec])
 
-        display_title = title.strip()
-        display_artist = primary_artist.strip()
         name = display_title if not display_artist else f"{display_title} - {display_artist}"
 
         new_row = {"id": new_id, "name": name, "album_name": ""}
@@ -528,6 +601,7 @@ def add_playlist():
             [_metadata, pd.DataFrame([new_row])],
             ignore_index=True
         )
+        register_song_key(new_row["name"], new_row["album_name"])
 
         faiss.normalize_L2(vec)
         _index.add(vec)

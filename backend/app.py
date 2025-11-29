@@ -153,13 +153,33 @@ def embed_text(text: str) -> np.ndarray:
     emb = np.ascontiguousarray(emb, dtype=np.float32)
     return emb
 
-def song_exists(name: str) -> bool:
-    """Check if a song with the given name already exists in the database."""
+def song_exists(name: str, album_name: str = "") -> bool:
+    """
+    Check if a song with the given name and artist/album already exists.
+    
+    If album_name is provided, checks for exact match of both name and album.
+    If album_name is empty, only checks if the name exists.
+    
+    This allows multiple songs with the same title but different artists/albums.
+    """
     global _metadata
     if _metadata is None or _metadata.empty:
         return False
-    # Case-insensitive check for duplicate song names
-    return name.strip().lower() in _metadata["name"].str.lower().values
+    
+    # Case-insensitive check for song name
+    name_lower = name.strip().lower()
+    
+    # If we have album/artist info, check for exact combo
+    if album_name and album_name.strip():
+        album_lower = album_name.strip().lower()
+        
+        mask = (
+            (_metadata["name"].str.lower() == name_lower) &
+            (_metadata["album_name"].str.lower() == album_lower)
+        )
+        return mask.any()
+    else:
+        return name_lower in _metadata["name"].str.lower().values
 
 def next_song_id() -> int:
     global _metadata
@@ -262,6 +282,7 @@ def add_song():
     data = request.get_json(silent=True) or {}
     title = data.get("title", "")
     lyrics = data.get("lyrics", "")
+    album = data.get("album", "")  # Optional album/artist field
 
     if not isinstance(title, str) or not title.strip():
         return jsonify({"error": "Missing or empty 'title'"}), 400
@@ -271,9 +292,12 @@ def add_song():
     if _vectors is None or _metadata is None or _index is None:
         return jsonify({"error": "Server not initialized yet."}), 500
 
-    # Check for duplicate song name
-    if song_exists(title):
-        return jsonify({"error": f"Song '{title.strip()}' already exists in the database."}), 409
+    # Check for duplicate song name (with album if provided)
+    if song_exists(title, album):
+        if album:
+            return jsonify({"error": f"Song '{title.strip()}' by '{album.strip()}' already exists in the database."}), 409
+        else:
+            return jsonify({"error": f"Song '{title.strip()}' already exists in the database."}), 409
 
     try:
         vec = embed_text(lyrics)
@@ -290,7 +314,7 @@ def add_song():
 
     _vectors = np.vstack([_vectors, vec])
 
-    new_row = {"id": new_id, "name": title.strip(), "album_name": ""}
+    new_row = {"id": new_id, "name": title.strip(), "album_name": album.strip() if album else ""}
     _metadata = pd.concat(
         [_metadata, pd.DataFrame([new_row])],
         ignore_index=True
@@ -370,11 +394,15 @@ def add_song_from_search():
 
     display_title = title.strip()
     display_artist = artist.strip()
+    
     name = display_title if not display_artist else f"{display_title} - {display_artist}"
-
-    # Check for duplicate song name
-    if song_exists(name):
-        return jsonify({"error": f"Song '{name}' already exists in the database."}), 409
+    
+    # Check for duplicate: if we have artist info, check title+artist combo
+    if song_exists(display_title, display_artist):
+        if display_artist:
+            return jsonify({"error": f"Song '{display_title}' by '{display_artist}' already exists in the database."}), 409
+        else:
+            return jsonify({"error": f"Song '{name}' already exists in the database."}), 409
 
     try:
         song = genius.search_song(title, artist)
@@ -401,7 +429,8 @@ def add_song_from_search():
 
     _vectors = np.vstack([_vectors, vec])
 
-    new_row = {"id": new_id, "name": name, "album_name": ""}
+    # Store artist in album_name field for consistency
+    new_row = {"id": new_id, "name": name, "album_name": display_artist}
     _metadata = pd.concat(
         [_metadata, pd.DataFrame([new_row])],
         ignore_index=True

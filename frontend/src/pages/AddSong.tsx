@@ -22,6 +22,7 @@ export default function AddSong() {
   const [mode, setMode] = useState<Mode>('song');
   const [title, setTitle] = useState('');
   const [lyrics, setLyrics] = useState('');
+  const [album, setAlbum] = useState(''); // New album/artist field
   const [playlistUrl, setPlaylistUrl] = useState('');
   const [songLimit, setSongLimit] = useState('');
   const [loading, setLoading] = useState(false);
@@ -42,10 +43,11 @@ export default function AddSong() {
     setSuccess(null);
 
     try {
-      const data = await addSong(title, lyrics);
+      const data = await addSong(title, lyrics, album);
       setSuccess(data);
       setTitle('');
       setLyrics('');
+      setAlbum(''); // Clear album field too
     } catch (err) {
       setError('Failed to add song. Please make sure your backend is running.');
     } finally {
@@ -222,6 +224,13 @@ export default function AddSong() {
                   onChange={(e) => setTitle(e.target.value)}
                   placeholder="Enter the song title..."
                   required
+                />
+
+                <Input
+                  label="Artist/Album (Optional)"
+                  value={album}
+                  onChange={(e) => setAlbum(e.target.value)}
+                  placeholder="Enter artist or album name (helps prevent duplicates)..."
                 />
 
                 <TextArea

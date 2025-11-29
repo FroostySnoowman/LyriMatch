@@ -99,13 +99,13 @@ export async function analyzeLyrics(lyrics: string): Promise<AnalyzeResponse> {
 /**
  * Adds a new song with lyrics to the Flask backend database.
  */
-export async function addSong(title: string, lyrics: string): Promise<AddSongResponse> {
+export async function addSong(title: string, lyrics: string, album: string = ""): Promise<AddSongResponse> {
   const res = await fetch(`${API_BASE}/add_song`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ title, lyrics }),
+    body: JSON.stringify({ title, lyrics, album }),
   });
 
   if (!res.ok) {

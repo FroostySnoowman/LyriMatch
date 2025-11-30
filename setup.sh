@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run this in Git Bash or a Unix shell
 #   ./setup.sh
-set -e  # exit on first error
+set -e
 
 # === Always run from the directory where this script lives ===
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -33,5 +33,3 @@ cd "$API_DIR"
 
 echo "=== Starting Flask server: python app.py ==="
 python app.py
-
-# Script will stay here until you Ctrl+C the server

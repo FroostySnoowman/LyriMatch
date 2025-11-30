@@ -192,7 +192,8 @@ npm install
 1. Go to [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
 2. Click "Create an App"
 3. Fill in app name and description
-4. Copy the **Client ID** and **Client Secret**
+4. Fill in the redirect URI (can be `https://lyrimatch.pages.dev` or anything secure)
+5. Copy the **Client ID** and **Client Secret**
 
 **Genius API Key:**
 1. Go to [Genius API Clients](https://genius.com/api-clients)

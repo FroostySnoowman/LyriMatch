@@ -271,9 +271,9 @@ export default function Landing() {
                   <button onClick={() => navigate('/examples')} className="block hover:text-white transition-colors">
                     Examples
                   </button>
-                  <button onClick={() => navigate('/pricing')} className="block hover:text-white transition-colors">
+                  {/* <button onClick={() => navigate('/pricing')} className="block hover:text-white transition-colors">
                     Pricing
-                  </button>
+                  </button> */}
                 </div>
               </div>
               <div>

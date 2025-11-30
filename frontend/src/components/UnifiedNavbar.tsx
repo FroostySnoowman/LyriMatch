@@ -22,7 +22,7 @@ export default function UnifiedNavbar() {
     { label: 'How It Works', path: '/how-it-works' },
     { label: 'Examples', path: '/examples' },
     { label: 'About', path: '/about' },
-    { label: 'Pricing', path: '/pricing' },
+    //{ label: 'Pricing', path: '/pricing' },
     { label: 'Match Lyrics', path: '/app' },
     { label: 'Add Song', path: '/add-song' },
   ];

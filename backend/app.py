@@ -5,6 +5,7 @@
 
 import os
 import re
+import difflib
 from typing import List, Dict, Tuple
 
 # reduce chances of OpenMP / tokenizer crashes on Apple Silicon
@@ -61,12 +62,14 @@ TOP_K = 5
 app = Flask(__name__)
 CORS(app)
 
-_vectors: np.ndarray | None = None    # np.ndarray [N, D], float32, L2-normalized
-_metadata: pd.DataFrame | None = None # columns: id, name, album_name
+_vectors: np.ndarray | None = None
+_metadata: pd.DataFrame | None = None
 _index: faiss.IndexFlatIP | None = None
 _model: SentenceTransformer | None = None
 _song_keys_full: set[Tuple[str, str]] | None = None
 _song_keys_title_only: set[str] | None = None
+
+_TOKEN_PATTERN = re.compile(r"\b\w+\b", flags=re.UNICODE)
 
 def ensure_embeddings_dir():
     os.makedirs(SONG_EMBEDDINGS_DIR, exist_ok=True)
@@ -82,7 +85,7 @@ def load_data(path: str) -> Tuple[np.ndarray, pd.DataFrame]:
     if not os.path.exists(path):
         print(f"No existing embeddings file at {path}. Starting with empty dataset.")
         vectors = np.zeros((0, 0), dtype=np.float32)
-        metadata = pd.DataFrame(columns=["id", "name", "album_name"])
+        metadata = pd.DataFrame(columns=["id", "name", "album_name", "lyrics"])
         return vectors, metadata
 
     print(f"Loading embeddings from: {path}")
@@ -93,7 +96,12 @@ def load_data(path: str) -> Tuple[np.ndarray, pd.DataFrame]:
     vectors = df[vec_cols].to_numpy(dtype=np.float32)
     vectors = np.ascontiguousarray(vectors, dtype=np.float32)
 
-    metadata = df[["id", "name", "album_name"]].reset_index(drop=True)
+    # Support existing parquet files without lyrics column.
+    meta_cols = ["id", "name", "album_name"]
+    if "lyrics" in df.columns:
+        meta_cols.append("lyrics")
+
+    metadata = df[meta_cols].reset_index(drop=True)
     return vectors, metadata
 
 def save_data(path: str, vectors: np.ndarray, metadata: pd.DataFrame):
@@ -163,6 +171,76 @@ def _normalize_text(value: str) -> str:
     value = re.sub(r"\s+", " ", value)
     return value
 
+def _normalize_for_match(text: str) -> str:
+    """
+    Lightweight normalization for lyric overlap:
+    - lowercases
+    - strips punctuation
+    - joins tokens with single spaces
+    """
+    if not isinstance(text, str):
+        text = str(text)
+    tokens = _TOKEN_PATTERN.findall(text.lower())
+    return " ".join(tokens)
+
+def _partial_ratio(a: str, b: str) -> float:
+    """
+    Approximate fuzzywuzzy.partial_ratio:
+    finds the best-matching substring of the longer string against the shorter.
+    """
+    if not a or not b:
+        return 0.0
+    if len(a) > len(b):
+        a, b = b, a
+
+    matcher = difflib.SequenceMatcher(None, a, b)
+    blocks = matcher.get_matching_blocks()
+    best = 0.0
+    la = len(a)
+
+    for block in blocks:
+        start = max(block[1] - block[0], 0)
+        end = start + la
+        substring = b[start:end]
+        r = difflib.SequenceMatcher(None, a, substring).ratio()
+        if r > best:
+            best = r
+
+    return best
+
+def lyric_overlap_score(query_text: str, lyrics_text: str) -> float:
+    """
+    Blend:
+    - exact normalized substring match (strongest signal)
+    - token coverage: fraction of query tokens that appear anywhere in the lyrics
+    - partial fuzzy ratio: how well the query matches some window of the lyrics
+
+    Exact or near-exact snippets from the same song will score very close to 1.0.
+    """
+    q_norm = _normalize_for_match(query_text)
+    t_norm = _normalize_for_match(lyrics_text)
+
+    if not q_norm or not t_norm:
+        return 0.0
+
+    # Exact normalized snippet inside normalized lyrics → treat as perfect match.
+    if q_norm in t_norm:
+        return 1.0
+
+    q_tokens = q_norm.split()
+    t_tokens = t_norm.split()
+    if not q_tokens or not t_tokens:
+        return 0.0
+
+    t_set = set(t_tokens)
+    common = sum(1 for tok in q_tokens if tok in t_set)
+    coverage = common / len(q_tokens)
+
+    partial = _partial_ratio(q_norm, t_norm)
+
+    # Weight coverage higher so high-overlap snippets are close to 1.0
+    return 0.7 * coverage + 0.3 * partial
+
 def register_song_key(name: str, album_name: str = ""):
     """
     Register a song into the in-memory duplicate key sets.
@@ -181,10 +259,6 @@ def register_song_key(name: str, album_name: str = ""):
     a = _normalize_text(album_name)
 
     if a:
-        # We have explicit artist/album information.
-        # Many rows from /add_song_from_search have name='title - artist'
-        # and album_name='artist'. Strip the ' - artist' suffix when present
-        # so the canonical key becomes (title, artist).
         title = n
         artist = a
         suffix = f" - {artist}"
@@ -192,10 +266,6 @@ def register_song_key(name: str, album_name: str = ""):
             title = _normalize_text(n[: -len(suffix)])
         _song_keys_full.add((title, artist))
     else:
-        # No album/artist stored. Older playlist imports used
-        # name='title - artist' with empty album_name; treat those as having
-        # both title & artist. Pure title-only rows (no ' - ') are kept in a
-        # separate title-only set.
         if " - " in n:
             raw_title, raw_artist = n.split(" - ", 1)
             title = _normalize_text(raw_title)
@@ -240,8 +310,6 @@ def song_exists(name: str, album_name: str = "") -> bool:
         key = (name_norm, album_norm)
         return key in _song_keys_full
 
-    # No album/artist provided: only check against pure title-only rows so
-    # that the same title can still appear for different artists/albums.
     return name_norm in _song_keys_title_only
 
 def next_song_id() -> int:
@@ -289,7 +357,11 @@ def init():
 
     if _vectors.size == 0:
         _vectors = np.zeros((0, emb_dim), dtype=np.float32)
-        _metadata = pd.DataFrame(columns=["id", "name", "album_name"])
+        _metadata = pd.DataFrame(columns=["id", "name", "album_name", "lyrics"])
+    else:
+        # Backfill lyrics column for older parquet files that don't have it.
+        if "lyrics" not in _metadata.columns:
+            _metadata["lyrics"] = ""
 
     # Build duplicate key sets from whatever metadata we loaded.
     rebuild_song_keys()
@@ -322,20 +394,65 @@ def search():
         return jsonify({"error": "No songs are indexed yet."}), 400
 
     query_vec = embed_text(lyrics)
-    scores, indices = _index.search(query_vec, TOP_K)
 
-    results: List[Dict] = []
-    for rank, (i, s) in enumerate(zip(indices[0], scores[0]), start=1):
+    # Retrieve a larger candidate set from FAISS, then re-rank by lyric overlap.
+    ntotal = _index.ntotal if hasattr(_index, "ntotal") else len(_metadata)
+    if ntotal <= 0:
+        return jsonify({"error": "No songs are indexed yet."}), 400
+
+    candidate_k = min(max(TOP_K * 25, 100), ntotal)
+    scores, indices = _index.search(query_vec, candidate_k)
+
+    has_lyrics = "lyrics" in _metadata.columns
+    raw_results: List[Dict] = []
+
+    for i, s in zip(indices[0], scores[0]):
         if i < 0 or i >= len(_metadata):
             continue
         row = _metadata.iloc[int(i)]
-        results.append(
+
+        lyrics_text = ""
+        if has_lyrics:
+            val = row.get("lyrics", "")
+            if isinstance(val, str):
+                lyrics_text = val
+
+        overlap = lyric_overlap_score(lyrics, lyrics_text) if lyrics_text else 0.0
+
+        # Combined match score: almost entirely lyric-driven; cosine nudges ties.
+        raw_cos = float(s)
+        cos_clamped = float(max(s, 0.0))
+        match_score = 0.95 * overlap + 0.05 * cos_clamped
+
+        raw_results.append(
             {
-                "rank": int(rank),
                 "name": str(row["name"]),
                 "album_name": str(row["album_name"]),
                 "id": int(row["id"]),
-                "cosine_sim": float(s),
+                "raw_cosine_sim": raw_cos,
+                "lyric_overlap": float(overlap),
+                "match_score": float(match_score),
+            }
+        )
+
+    if not raw_results:
+        return jsonify({"results": []}), 200
+
+    # Sort by combined match score.
+    raw_results.sort(key=lambda r: r["match_score"], reverse=True)
+
+    results: List[Dict] = []
+    for rank, r in enumerate(raw_results[:TOP_K], start=1):
+        results.append(
+            {
+                "rank": int(rank),
+                "name": r["name"],
+                "album_name": r["album_name"],
+                "id": r["id"],
+                "cosine_sim": r["match_score"],
+                "lyric_overlap": r["lyric_overlap"],
+                "match_score": r["match_score"],
+                "raw_cosine_sim": r["raw_cosine_sim"],
             }
         )
 
@@ -380,7 +497,12 @@ def add_song():
 
     _vectors = np.vstack([_vectors, vec])
 
-    new_row = {"id": new_id, "name": title.strip(), "album_name": album.strip() if album else ""}
+    new_row = {
+        "id": new_id,
+        "name": title.strip(),
+        "album_name": album.strip() if album else "",
+        "lyrics": lyrics.strip(),
+    }
     _metadata = pd.concat(
         [_metadata, pd.DataFrame([new_row])],
         ignore_index=True
@@ -497,7 +619,12 @@ def add_song_from_search():
     _vectors = np.vstack([_vectors, vec])
 
     # Store artist in album_name field for consistency
-    new_row = {"id": new_id, "name": name, "album_name": display_artist}
+    new_row = {
+        "id": new_id,
+        "name": name,
+        "album_name": display_artist,
+        "lyrics": lyrics.strip(),
+    }
     _metadata = pd.concat(
         [_metadata, pd.DataFrame([new_row])],
         ignore_index=True
@@ -596,7 +723,12 @@ def add_playlist():
 
         name = display_title if not display_artist else f"{display_title} - {display_artist}"
 
-        new_row = {"id": new_id, "name": name, "album_name": ""}
+        new_row = {
+            "id": new_id,
+            "name": name,
+            "album_name": "",
+            "lyrics": lyrics.strip(),
+        }
         _metadata = pd.concat(
             [_metadata, pd.DataFrame([new_row])],
             ignore_index=True
